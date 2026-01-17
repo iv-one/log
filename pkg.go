@@ -7,7 +7,10 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/muesli/termenv"
 )
 
 var (
@@ -15,17 +18,27 @@ var (
 	registry = sync.Map{}
 
 	// defaultLogger is the default global logger instance.
-	defaultLogger = NewWithOptions(os.Stderr, Options{ReportTimestamp: true})
+	defaultLogger     atomic.Pointer[Logger]
+	defaultLoggerOnce sync.Once
 )
 
 // Default returns the default logger. The default logger comes with timestamp enabled.
 func Default() *Logger {
-	return defaultLogger
+	dl := defaultLogger.Load()
+	if dl == nil {
+		defaultLoggerOnce.Do(func() {
+			defaultLogger.CompareAndSwap(
+				nil, NewWithOptions(os.Stderr, Options{ReportTimestamp: true}),
+			)
+		})
+		dl = defaultLogger.Load()
+	}
+	return dl
 }
 
 // SetDefault sets the default global logger.
 func SetDefault(logger *Logger) {
-	defaultLogger = logger
+	defaultLogger.Store(logger)
 }
 
 // New returns a new logger with the default options.
@@ -39,7 +52,7 @@ func NewWithOptions(w io.Writer, o Options) *Logger {
 		b:               bytes.Buffer{},
 		mu:              &sync.RWMutex{},
 		helpers:         &sync.Map{},
-		level:           int32(o.Level),
+		level:           int64(o.Level),
 		reportTimestamp: o.ReportTimestamp,
 		reportCaller:    o.ReportCaller,
 		prefix:          o.Prefix,
@@ -53,13 +66,14 @@ func NewWithOptions(w io.Writer, o Options) *Logger {
 
 	l.SetOutput(w)
 	l.SetLevel(Level(l.level))
+	l.SetStyles(DefaultStyles())
 
 	if l.callerFormatter == nil {
 		l.callerFormatter = ShortCallerFormatter
 	}
 
 	if l.timeFunc == nil {
-		l.timeFunc = time.Now
+		l.timeFunc = func(t time.Time) time.Time { return t }
 	}
 
 	if l.timeFormat == "" {
@@ -71,145 +85,165 @@ func NewWithOptions(w io.Writer, o Options) *Logger {
 
 // SetReportTimestamp sets whether to report timestamp for the default logger.
 func SetReportTimestamp(report bool) {
-	defaultLogger.SetReportTimestamp(report)
+	Default().SetReportTimestamp(report)
 }
 
 // SetReportCaller sets whether to report caller location for the default logger.
 func SetReportCaller(report bool) {
-	defaultLogger.SetReportCaller(report)
+	Default().SetReportCaller(report)
 }
 
 // SetLevel sets the level for the default logger.
 func SetLevel(level Level) {
-	defaultLogger.SetLevel(level)
+	Default().SetLevel(level)
 }
 
 // GetLevel returns the level for the default logger.
 func GetLevel() Level {
-	return defaultLogger.GetLevel()
+	return Default().GetLevel()
 }
 
 // SetTimeFormat sets the time format for the default logger.
 func SetTimeFormat(format string) {
-	defaultLogger.SetTimeFormat(format)
+	Default().SetTimeFormat(format)
 }
 
 // SetTimeFunction sets the time function for the default logger.
 func SetTimeFunction(f TimeFunction) {
-	defaultLogger.SetTimeFunction(f)
+	Default().SetTimeFunction(f)
 }
 
 // SetOutput sets the output for the default logger.
 func SetOutput(w io.Writer) {
-	defaultLogger.SetOutput(w)
+	Default().SetOutput(w)
 }
 
 // SetFormatter sets the formatter for the default logger.
 func SetFormatter(f Formatter) {
-	defaultLogger.SetFormatter(f)
+	Default().SetFormatter(f)
 }
 
 // SetCallerFormatter sets the caller formatter for the default logger.
 func SetCallerFormatter(f CallerFormatter) {
-	defaultLogger.SetCallerFormatter(f)
+	Default().SetCallerFormatter(f)
 }
 
 // SetCallerOffset sets the caller offset for the default logger.
 func SetCallerOffset(offset int) {
-	defaultLogger.SetCallerOffset(offset)
+	Default().SetCallerOffset(offset)
 }
 
 // SetPrefix sets the prefix for the default logger.
 func SetPrefix(prefix string) {
-	defaultLogger.SetPrefix(prefix)
+	Default().SetPrefix(prefix)
+}
+
+// SetColorProfile force sets the underlying Lip Gloss renderer color profile
+// for the TextFormatter.
+func SetColorProfile(profile termenv.Profile) {
+	Default().SetColorProfile(profile)
+}
+
+// SetStyles sets the logger styles for the TextFormatter.
+func SetStyles(s *Styles) {
+	Default().SetStyles(s)
 }
 
 // GetPrefix returns the prefix for the default logger.
 func GetPrefix() string {
-	return defaultLogger.GetPrefix()
+	return Default().GetPrefix()
 }
 
 // With returns a new logger with the given keyvals.
-func With(keyvals ...interface{}) *Logger {
-	return defaultLogger.With(keyvals...)
+func With(keyvals ...any) *Logger {
+	return Default().With(keyvals...)
 }
 
 // WithPrefix returns a new logger with the given prefix.
 func WithPrefix(prefix string) *Logger {
-	return defaultLogger.WithPrefix(prefix)
+	return Default().WithPrefix(prefix)
 }
 
 // Helper marks the calling function as a helper
 // and skips it for source location information.
 // It's the equivalent of testing.TB.Helper().
 func Helper() {
-	// skip this function frame
-	defaultLogger.helper(1)
+	Default().helper(1)
+}
+
+// Log logs a message with the given level.
+func Log(level Level, msg any, keyvals ...any) {
+	Default().Log(level, msg, keyvals...)
 }
 
 // Debug logs a debug message.
-func Debug(msg interface{}, keyvals ...interface{}) {
-	defaultLogger.log(DebugLevel, msg, keyvals...)
+func Debug(msg any, keyvals ...any) {
+	Default().Log(DebugLevel, msg, keyvals...)
 }
 
 // Info logs an info message.
-func Info(msg interface{}, keyvals ...interface{}) {
-	defaultLogger.log(InfoLevel, msg, keyvals...)
+func Info(msg any, keyvals ...any) {
+	Default().Log(InfoLevel, msg, keyvals...)
 }
 
 // Warn logs a warning message.
-func Warn(msg interface{}, keyvals ...interface{}) {
-	defaultLogger.log(WarnLevel, msg, keyvals...)
+func Warn(msg any, keyvals ...any) {
+	Default().Log(WarnLevel, msg, keyvals...)
 }
 
 // Error logs an error message.
-func Error(msg interface{}, keyvals ...interface{}) {
-	defaultLogger.log(ErrorLevel, msg, keyvals...)
+func Error(msg any, keyvals ...any) {
+	Default().Log(ErrorLevel, msg, keyvals...)
 }
 
 // Fatal logs a fatal message and exit.
-func Fatal(msg interface{}, keyvals ...interface{}) {
-	defaultLogger.log(FatalLevel, msg, keyvals...)
+func Fatal(msg any, keyvals ...any) {
+	Default().Log(FatalLevel, msg, keyvals...)
 	os.Exit(1)
 }
 
 // Print logs a message with no level.
-func Print(msg interface{}, keyvals ...interface{}) {
-	defaultLogger.log(noLevel, msg, keyvals...)
+func Print(msg any, keyvals ...any) {
+	Default().Log(noLevel, msg, keyvals...)
+}
+
+// Logf logs a message with formatting and level.
+func Logf(level Level, format string, args ...any) {
+	Default().Logf(level, format, args...)
 }
 
 // Debugf logs a debug message with formatting.
-func Debugf(format string, args ...interface{}) {
-	defaultLogger.log(DebugLevel, fmt.Sprintf(format, args...))
+func Debugf(format string, args ...any) {
+	Default().Log(DebugLevel, fmt.Sprintf(format, args...))
 }
 
 // Infof logs an info message with formatting.
-func Infof(format string, args ...interface{}) {
-	defaultLogger.log(InfoLevel, fmt.Sprintf(format, args...))
+func Infof(format string, args ...any) {
+	Default().Log(InfoLevel, fmt.Sprintf(format, args...))
 }
 
 // Warnf logs a warning message with formatting.
-func Warnf(format string, args ...interface{}) {
-	defaultLogger.log(WarnLevel, fmt.Sprintf(format, args...))
+func Warnf(format string, args ...any) {
+	Default().Log(WarnLevel, fmt.Sprintf(format, args...))
 }
 
 // Errorf logs an error message with formatting.
-func Errorf(format string, args ...interface{}) {
-	defaultLogger.log(ErrorLevel, fmt.Sprintf(format, args...))
+func Errorf(format string, args ...any) {
+	Default().Log(ErrorLevel, fmt.Sprintf(format, args...))
 }
 
 // Fatalf logs a fatal message with formatting and exit.
-func Fatalf(format string, args ...interface{}) {
-	defaultLogger.log(FatalLevel, fmt.Sprintf(format, args...))
+func Fatalf(format string, args ...any) {
+	Default().Log(FatalLevel, fmt.Sprintf(format, args...))
 	os.Exit(1)
 }
 
 // Printf logs a message with formatting and no level.
-func Printf(format string, args ...interface{}) {
-	defaultLogger.log(noLevel, fmt.Sprintf(format, args...))
+func Printf(format string, args ...any) {
+	Default().Log(noLevel, fmt.Sprintf(format, args...))
 }
 
 // StandardLog returns a standard logger from the default logger.
 func StandardLog(opts ...StandardLogOptions) *log.Logger {
-	return defaultLogger.StandardLog(opts...)
+	return Default().StandardLog(opts...)
 }

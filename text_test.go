@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,12 +13,20 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func _zeroTime() time.Time {
-	return time.Time{}
+func _zeroTime(time.Time) time.Time {
+	return time.Time{}.AddDate(1, 0, 0)
+}
+
+func TestNilStyles(t *testing.T) {
+	st := DefaultStyles()
+	l := New(io.Discard)
+	l.SetStyles(nil)
+	assert.Equal(t, st, l.styles)
 }
 
 func TestTextCaller(t *testing.T) {
@@ -30,15 +39,15 @@ func TestTextCaller(t *testing.T) {
 		name     string
 		expected string
 		msg      string
-		kvs      []interface{}
-		f        func(msg interface{}, kvs ...interface{})
+		kvs      []any
+		f        func(msg any, kvs ...any)
 	}{
 		{
 			name:     "simple caller",
 			expected: fmt.Sprintf("INFO <log/%s:%d> info\n", filepath.Base(file), line+14),
 			msg:      "info",
 			kvs:      nil,
-			f: func(msg interface{}, kvs ...interface{}) {
+			f: func(msg any, kvs ...any) {
 				logger.Info(msg, kvs...)
 			},
 		},
@@ -47,7 +56,7 @@ func TestTextCaller(t *testing.T) {
 			expected: fmt.Sprintf("INFO <log/%s:%d> info\n", filepath.Base(file), line+58),
 			msg:      "info",
 			kvs:      nil,
-			f: func(msg interface{}, kvs ...interface{}) {
+			f: func(msg any, kvs ...any) {
 				logger.Helper()
 				logger.Info(msg, kvs...)
 			},
@@ -57,8 +66,8 @@ func TestTextCaller(t *testing.T) {
 			expected: fmt.Sprintf("INFO <log/%s:%d> info\n", filepath.Base(file), line+37),
 			msg:      "info",
 			kvs:      nil,
-			f: func(msg interface{}, kvs ...interface{}) {
-				fun := func(msg interface{}, kvs ...interface{}) {
+			f: func(msg any, kvs ...any) {
+				fun := func(msg any, kvs ...any) {
 					logger.Helper()
 					logger.Info(msg, kvs...)
 				}
@@ -70,9 +79,9 @@ func TestTextCaller(t *testing.T) {
 			expected: fmt.Sprintf("INFO <log/%s:%d> info\n", filepath.Base(file), line+58),
 			msg:      "info",
 			kvs:      nil,
-			f: func(msg interface{}, kvs ...interface{}) {
+			f: func(msg any, kvs ...any) {
 				logger.Helper()
-				fun := func(msg interface{}, kvs ...interface{}) {
+				fun := func(msg any, kvs ...any) {
 					logger.Helper()
 					logger.Info(msg, kvs...)
 				}
@@ -96,8 +105,8 @@ func TestTextLogger(t *testing.T) {
 		name     string
 		expected string
 		msg      string
-		kvs      []interface{}
-		f        func(msg interface{}, kvs ...interface{})
+		kvs      []any
+		f        func(msg any, kvs ...any)
 	}{
 		{
 			name:     "simple message",
@@ -117,77 +126,77 @@ func TestTextLogger(t *testing.T) {
 			name:     "message with keyvals",
 			expected: "INFO info key1=val1 key2=val2\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", "val1", "key2", "val2"},
+			kvs:      []any{"key1", "val1", "key2", "val2"},
 			f:        logger.Info,
 		},
 		{
 			name:     "error message with keyvals",
 			expected: "ERRO info key1=val1 key2=val2\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", "val1", "key2", "val2"},
+			kvs:      []any{"key1", "val1", "key2", "val2"},
 			f:        logger.Error,
 		},
 		{
 			name:     "error message with multiline",
 			expected: "ERRO info\n  key1=\n  │ val1\n  │ val2\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", "val1\nval2"},
+			kvs:      []any{"key1", "val1\nval2"},
 			f:        logger.Error,
 		},
 		{
 			name:     "odd number of keyvals",
 			expected: "ERRO info key1=val1 key2=val2 key3=\"missing value\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", "val1", "key2", "val2", "key3"},
+			kvs:      []any{"key1", "val1", "key2", "val2", "key3"},
 			f:        logger.Error,
 		},
 		{
 			name:     "error field",
 			expected: "ERRO info key1=\"error value\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", errors.New("error value")},
+			kvs:      []any{"key1", errors.New("error value")},
 			f:        logger.Error,
 		},
 		{
 			name:     "struct field",
 			expected: "ERRO info key1={foo:bar}\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", struct{ foo string }{foo: "bar"}},
+			kvs:      []any{"key1", struct{ foo string }{foo: "bar"}},
 			f:        logger.Error,
 		},
 		{
 			name:     "struct field quoted",
 			expected: "ERRO info key1=\"{foo:bar baz}\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", struct{ foo string }{foo: "bar baz"}},
+			kvs:      []any{"key1", struct{ foo string }{foo: "bar baz"}},
 			f:        logger.Error,
 		},
 		{
 			name:     "slice of strings",
 			expected: "ERRO info key1=\"[foo bar]\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", []string{"foo", "bar"}},
+			kvs:      []any{"key1", []string{"foo", "bar"}},
 			f:        logger.Error,
 		},
 		{
 			name:     "slice of structs",
 			expected: "ERRO info key1=\"[{foo:bar} {foo:baz}]\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", []struct{ foo string }{{foo: "bar"}, {foo: "baz"}}},
+			kvs:      []any{"key1", []struct{ foo string }{{foo: "bar"}, {foo: "baz"}}},
 			f:        logger.Error,
 		},
 		{
 			name:     "slice of errors",
 			expected: "ERRO info key1=\"[error value1 error value2]\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", []error{errors.New("error value1"), errors.New("error value2")}},
+			kvs:      []any{"key1", []error{errors.New("error value1"), errors.New("error value2")}},
 			f:        logger.Error,
 		},
 		{
 			name:     "map of strings",
 			expected: "ERRO info key1=\"map[baz:qux foo:bar]\"\n",
 			msg:      "info",
-			kvs:      []interface{}{"key1", map[string]string{"foo": "bar", "baz": "qux"}},
+			kvs:      []any{"key1", map[string]string{"foo": "bar", "baz": "qux"}},
 			f:        logger.Error,
 		},
 	}
@@ -221,6 +230,7 @@ func TestTextFatal(t *testing.T) {
 	logger.SetReportCaller(true)
 	if os.Getenv("FATAL") == "1" {
 		logger.Fatal("i'm dead")
+		logger.Fatalf("bye %s", "bye")
 		return
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=TestTextFatal")
@@ -235,20 +245,22 @@ func TestTextFatal(t *testing.T) {
 func TestTextValueStyles(t *testing.T) {
 	var buf bytes.Buffer
 	logger := New(&buf)
-	oldValueStyle := ValueStyle
-	defer func() { ValueStyle = oldValueStyle }()
-	ValueStyle = lipgloss.NewStyle().Bold(true)
-	ValueStyles["key3"] = ValueStyle.Copy().Underline(true)
+	logger.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	st := DefaultStyles()
+	st.Value = lipgloss.NewStyle().Bold(true)
+	st.Values["key3"] = st.Value.Copy().Underline(true)
+	logger.SetStyles(st)
 	cases := []struct {
 		name     string
 		expected string
 		msg      string
-		kvs      []interface{}
-		f        func(msg interface{}, kvs ...interface{})
+		kvs      []any
+		f        func(msg any, kvs ...any)
 	}{
 		{
 			name:     "simple message",
-			expected: fmt.Sprintf("%s info\n", InfoLevelStyle),
+			expected: fmt.Sprintf("%s info\n", st.Levels[InfoLevel]),
 			msg:      "info",
 			kvs:      nil,
 			f:        logger.Info,
@@ -264,127 +276,127 @@ func TestTextValueStyles(t *testing.T) {
 			name: "message with keyvals",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s %s%s%s\n",
-				InfoLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render("val1"),
-				KeyStyle.Render("key2"), SeparatorStyle.Render(separator), ValueStyle.Render("val2"),
+				st.Levels[InfoLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render("val1"),
+				st.Key.Render("key2"), st.Separator.Render(separator), st.Value.Render("val2"),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", "val1", "key2", "val2"},
+			kvs: []any{"key1", "val1", "key2", "val2"},
 			f:   logger.Info,
 		},
 		{
 			name: "error message with multiline",
 			expected: fmt.Sprintf(
 				"%s info\n  %s%s\n%s%s\n%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator),
-				SeparatorStyle.Render(indentSeparator), ValueStyle.Render("val1"),
-				SeparatorStyle.Render(indentSeparator), ValueStyle.Render("val2"),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator),
+				st.Separator.Render(indentSeparator), st.Value.Render("val1"),
+				st.Separator.Render(indentSeparator), st.Value.Render("val2"),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", "val1\nval2"},
+			kvs: []any{"key1", "val1\nval2"},
 			f:   logger.Error,
 		},
 		{
 			name: "error message with keyvals",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render("val1"),
-				KeyStyle.Render("key2"), SeparatorStyle.Render(separator), ValueStyle.Render("val2"),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render("val1"),
+				st.Key.Render("key2"), st.Separator.Render(separator), st.Value.Render("val2"),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", "val1", "key2", "val2"},
+			kvs: []any{"key1", "val1", "key2", "val2"},
 			f:   logger.Error,
 		},
 		{
 			name: "odd number of keyvals",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s %s%s%s %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render("val1"),
-				KeyStyle.Render("key2"), SeparatorStyle.Render(separator), ValueStyle.Render("val2"),
-				KeyStyle.Render("key3"), SeparatorStyle.Render(separator), ValueStyles["key3"].Render(`"missing value"`),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render("val1"),
+				st.Key.Render("key2"), st.Separator.Render(separator), st.Value.Render("val2"),
+				st.Key.Render("key3"), st.Separator.Render(separator), st.Values["key3"].Render(`"missing value"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", "val1", "key2", "val2", "key3"},
+			kvs: []any{"key1", "val1", "key2", "val2", "key3"},
 			f:   logger.Error,
 		},
 		{
 			name: "error field",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render(`"error value"`),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render(`"error value"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", errors.New("error value")},
+			kvs: []any{"key1", errors.New("error value")},
 			f:   logger.Error,
 		},
 		{
 			name: "struct field",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				InfoLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render("{foo:bar}"),
+				st.Levels[InfoLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render("{foo:bar}"),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", struct{ foo string }{foo: "bar"}},
+			kvs: []any{"key1", struct{ foo string }{foo: "bar"}},
 			f:   logger.Info,
 		},
 		{
 			name: "struct field quoted",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				InfoLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render(`"{foo:bar baz}"`),
+				st.Levels[InfoLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render(`"{foo:bar baz}"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", struct{ foo string }{foo: "bar baz"}},
+			kvs: []any{"key1", struct{ foo string }{foo: "bar baz"}},
 			f:   logger.Info,
 		},
 		{
 			name: "slice of strings",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render(`"[foo bar]"`),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render(`"[foo bar]"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", []string{"foo", "bar"}},
+			kvs: []any{"key1", []string{"foo", "bar"}},
 			f:   logger.Error,
 		},
 		{
 			name: "slice of structs",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render(`"[{foo:bar} {foo:baz}]"`),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render(`"[{foo:bar} {foo:baz}]"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", []struct{ foo string }{{foo: "bar"}, {foo: "baz"}}},
+			kvs: []any{"key1", []struct{ foo string }{{foo: "bar"}, {foo: "baz"}}},
 			f:   logger.Error,
 		},
 		{
 			name: "slice of errors",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render(`"[error value1 error value2]"`),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render(`"[error value1 error value2]"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", []error{errors.New("error value1"), errors.New("error value2")}},
+			kvs: []any{"key1", []error{errors.New("error value1"), errors.New("error value2")}},
 			f:   logger.Error,
 		},
 		{
 			name: "map of strings",
 			expected: fmt.Sprintf(
 				"%s info %s%s%s\n",
-				ErrorLevelStyle,
-				KeyStyle.Render("key1"), SeparatorStyle.Render(separator), ValueStyle.Render(`"map[baz:qux foo:bar]"`),
+				st.Levels[ErrorLevel],
+				st.Key.Render("key1"), st.Separator.Render(separator), st.Value.Render(`"map[baz:qux foo:bar]"`),
 			),
 			msg: "info",
-			kvs: []interface{}{"key1", map[string]string{"foo": "bar", "baz": "qux"}},
+			kvs: []any{"key1", map[string]string{"foo": "bar", "baz": "qux"}},
 			f:   logger.Error,
 		},
 	}
@@ -395,4 +407,30 @@ func TestTextValueStyles(t *testing.T) {
 			assert.Equal(t, c.expected, buf.String())
 		})
 	}
+}
+
+func TestColorProfile(t *testing.T) {
+	cases := []termenv.Profile{
+		termenv.Ascii,
+		termenv.ANSI,
+		termenv.ANSI256,
+		termenv.TrueColor,
+	}
+	l := New(io.Discard)
+	for _, p := range cases {
+		l.SetColorProfile(p)
+		assert.Equal(t, p, l.re.ColorProfile())
+	}
+}
+
+func TestCustomLevelStyle(t *testing.T) {
+	var buf bytes.Buffer
+	l := New(&buf)
+	st := DefaultStyles()
+	lvl := Level(1234)
+	st.Levels[lvl] = lipgloss.NewStyle().Bold(true).SetString("FUNKY")
+	l.SetStyles(st)
+	l.SetLevel(lvl)
+	l.Log(lvl, "foobar")
+	assert.Equal(t, "FUNKY foobar\n", buf.String())
 }

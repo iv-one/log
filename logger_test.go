@@ -2,6 +2,7 @@ package log
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -17,8 +18,8 @@ func TestSubLogger(t *testing.T) {
 		name     string
 		expected string
 		msg      string
-		fields   []interface{}
-		kvs      []interface{}
+		fields   []any
+		kvs      []any
 	}{
 		{
 			name:     "sub logger nil fields",
@@ -31,15 +32,22 @@ func TestSubLogger(t *testing.T) {
 			name:     "sub logger info",
 			expected: "INFO info foo=bar\n",
 			msg:      "info",
-			fields:   []interface{}{"foo", "bar"},
+			fields:   []any{"foo", "bar"},
 			kvs:      nil,
 		},
 		{
 			name:     "sub logger info with kvs",
 			expected: "INFO info foo=bar foobar=baz\n",
 			msg:      "info",
-			fields:   []interface{}{"foo", "bar"},
-			kvs:      []interface{}{"foobar", "baz"},
+			fields:   []any{"foo", "bar"},
+			kvs:      []any{"foobar", "baz"},
+		},
+		{
+			name:     "emoji",
+			expected: "INFO 👍 🐱\n",
+			msg:      "👍 🐱",
+			fields:   nil,
+			kvs:      nil,
 		},
 	}
 	for _, c := range cases {
@@ -87,35 +95,35 @@ func TestLogFormatter(t *testing.T) {
 	cases := []struct {
 		name     string
 		format   string
-		args     []interface{}
-		fun      func(string, ...interface{})
+		args     []any
+		fun      func(string, ...any)
 		expected string
 	}{
 		{
 			name:     "info format",
 			format:   "%s %s",
-			args:     []interface{}{"foo", "bar"},
+			args:     []any{"foo", "bar"},
 			fun:      l.Infof,
 			expected: "INFO foo bar\n",
 		},
 		{
 			name:     "debug format",
 			format:   "%s %s",
-			args:     []interface{}{"foo", "bar"},
+			args:     []any{"foo", "bar"},
 			fun:      l.Debugf,
 			expected: "DEBU foo bar\n",
 		},
 		{
 			name:     "warn format",
 			format:   "%s %s",
-			args:     []interface{}{"foo", "bar"},
+			args:     []any{"foo", "bar"},
 			fun:      l.Warnf,
 			expected: "WARN foo bar\n",
 		},
 		{
 			name:     "error format",
 			format:   "%s %s",
-			args:     []interface{}{"foo", "bar"},
+			args:     []any{"foo", "bar"},
 			fun:      l.Errorf,
 			expected: "ERRO foo bar\n",
 		},
@@ -124,6 +132,47 @@ func TestLogFormatter(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			buf.Reset()
 			c.fun(c.format, "foo", "bar")
+			assert.Equal(t, c.expected, buf.String())
+		})
+	}
+}
+
+func TestEmptyMessage(t *testing.T) {
+	var buf bytes.Buffer
+	l := New(&buf)
+	cases := []struct {
+		name     string
+		expected string
+		msg      string
+		fields   []any
+		kvs      []any
+	}{
+		{
+			name:     "empty message nil fields",
+			expected: "INFO\n",
+			msg:      "",
+			fields:   nil,
+			kvs:      nil,
+		},
+		{
+			name:     "empty message with fields",
+			expected: "INFO foo=bar\n",
+			msg:      "",
+			fields:   []any{"foo", "bar"},
+			kvs:      nil,
+		},
+		{
+			name:     "empty message with fields & kvs",
+			expected: "INFO foo=bar foobar=baz\n",
+			msg:      "",
+			fields:   []any{"foo", "bar"},
+			kvs:      []any{"foobar", "baz"},
+		},
+	}
+	for _, c := range cases {
+		buf.Reset()
+		t.Run(c.name, func(t *testing.T) {
+			l.With(c.fields...).Info(c.msg, c.kvs...)
 			assert.Equal(t, c.expected, buf.String())
 		})
 	}
@@ -156,7 +205,7 @@ func TestLogWithPrefix(t *testing.T) {
 }
 
 func TestLogWithRaceCondition(t *testing.T) {
-	var buf bytes.Buffer
+	w := io.Discard
 	cases := []struct {
 		name string
 	}{
@@ -166,21 +215,30 @@ func TestLogWithRaceCondition(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			buf.Reset()
-			l := New(&buf)
+			l := New(w)
 
 			var done sync.WaitGroup
-			done.Add(2)
 
-			go func() {
-				l.With("arg1", "val1", "arg2", "val2")
-				done.Done()
-			}()
+			longArgs := make([]any, 0, 1000)
+			for i := 0; i < 1000; i++ {
+				longArgs = append(longArgs, fmt.Sprintf("arg%d", i), fmt.Sprintf("val%d", i))
+			}
+			l = l.With(longArgs...)
 
-			go func() {
-				l.Info("kinda long log message")
-				done.Done()
-			}()
+			for i := 0; i < 100; i++ {
+				done.Add(1)
+				go func() {
+					ll := l.With("arg1", "val1", "arg2", "val2")
+					ll.Info("kinda long long log message")
+					done.Done()
+				}()
+
+				done.Add(1)
+				go func() {
+					l.Info("kinda long log message")
+					done.Done()
+				}()
+			}
 			done.Wait()
 		})
 	}
@@ -209,12 +267,21 @@ func TestRace(t *testing.T) {
 			l.GetPrefix()
 
 			o := l.With("foo", "bar")
-			o.Print("foo")
+			o.Printf("foo %s", "bar")
 			o.SetTimeFormat(time.Kitchen)
-			o.Debug("foo")
+			o.Warn("foo")
 			o.SetOutput(w)
 			o.Error("foo")
 			o.SetFormatter(JSONFormatter)
 		})
 	}
+}
+
+func TestCustomLevel(t *testing.T) {
+	var buf bytes.Buffer
+	level500 := Level(500)
+	l := New(&buf)
+	l.SetLevel(level500)
+	l.Logf(level500, "foo")
+	assert.Equal(t, "foo\n", buf.String())
 }
